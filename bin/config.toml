@@ -1,0 +1,10 @@
+chunk_width = 64
+chunk_height = 64
+map_size = 5
+frequency = 0.05
+lacunarity = 1.0
+persistence = 0.2
+octaves = 6
+seed = 56987
+save_path = "../data/terrain_chunks/"
+chunks_to_generate = 9

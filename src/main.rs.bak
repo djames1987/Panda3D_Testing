@@ -1,0 +1,160 @@
+extern crate noise;
+extern crate config;
+
+use crate::noise::Seedable;
+use noise::{NoiseFn, Perlin};
+use std::error::Error;
+use std::fs::{create_dir_all, File};
+use std::io::prelude::*;
+use config::{Config, File as CFile};
+use std::env;
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 || args.len() > 4 {
+        panic!("Invalid number of arguments. Usage: `cargo run new` or `cargo run <chunk_x> <chunk_y>`");
+    }
+
+    let mut settings = Config::default();
+    settings.merge(CFile::with_name("config.toml"))?;
+
+    let map_size = settings.get::<usize>("map_size")?;
+    let seed = settings.get::<u32>("seed")?;
+    let chunk_width = settings.get::<usize>("chunk_width")?;
+    let chunk_height = settings.get::<usize>("chunk_height")?;
+    let save_path = settings.get::<String>("save_path")?;
+    let frequency = settings.get::<f64>("frequency")?;
+    let lacunarity = settings.get::<f64>("lacunarity")?;
+    let persistence = settings.get::<f64>("persistence")?;
+    let octaves = settings.get::<usize>("octaves")?;
+    let chunks_to_generate = settings.get::<usize>("chunks_to_generate")?;
+
+    create_dir_all(&save_path)?;
+
+    let perlin = Perlin::new().set_seed(seed);
+
+    if args[1] == "new" {
+        generate_swirl_chunks(chunks_to_generate, &settings)?;
+    } else {
+        let chunk_x: isize = args[1].parse()?;
+        let chunk_y: isize = args[2].parse()?;
+        generate_chunk(chunk_x, chunk_y, &settings)?;
+    }
+
+    Ok(())
+}
+
+fn generate_swirl_chunks(chunks_to_generate: usize, settings: &Config) -> Result<(), Box<dyn Error>> {
+    let mut x = 0;
+    let mut y = 0;
+    let mut dx = 0;
+    let mut dy = -1;
+
+    for _ in 0..(chunks_to_generate + 1) {
+        if x == y || (x < 0 && x == -y) || (x > 0 && x == 1 - y) {
+            let temp = dx;
+            dx = -dy;
+            dy = temp;
+        }
+
+        if x != 0 || y != 0 {
+            generate_chunk(x, y, settings)?;
+        }
+
+        x += dx;
+        y += dy;
+    }
+
+    Ok(())
+}
+
+fn height_to_color(height: f64) -> (u8, u8, u8) {
+    let color_r: u8;
+    let color_g: u8;
+    let color_b: u8;
+
+    if height < 0.25 {
+        // Deep water: dark blue
+        color_r = 0;
+        color_g = 0;
+        color_b = (255.0 * (height / 0.25)) as u8;
+    } else if height < 0.5 {
+        // Shallow water: light blue
+        color_r = 0;
+        color_g = (255.0 * ((height - 0.25) / 0.25)) as u8;
+        color_b = 255;
+    } else if height < 0.75 {
+        // Land: green
+        color_r = (255.0 * ((height - 0.5) / 0.25)) as u8;
+        color_g = 255;
+        color_b = (255.0 * (1.0 - ((height - 0.5) / 0.25))) as u8;
+        } else {
+        // Mountain: white
+        color_r = 255;
+        color_g = (255.0 * (1.0 - ((height - 0.75) / 0.25))) as u8;
+        color_b = (255.0 * (1.0 - ((height - 0.75) / 0.25))) as u8;
+        }
+        (color_r, color_g, color_b)
+    }
+
+fn generate_chunk(chunk_x: isize, chunk_y: isize, settings: &Config) -> Result<(), Box<dyn Error>> {
+    let map_size = settings.get::<usize>("map_size")?;
+    let seed = settings.get::<u32>("seed")?;
+    let chunk_width = settings.get::<usize>("chunk_width")?;
+    let chunk_height = settings.get::<usize>("chunk_height")?;
+    let save_path = settings.get::<String>("save_path")?;
+    let frequency = settings.get::<f64>("frequency")?;
+    let lacunarity = settings.get::<f64>("lacunarity")?;
+    let persistence = settings.get::<f64>("persistence")?;
+    let octaves = settings.get::<usize>("octaves")?;
+    let perlin = Perlin::new().set_seed(seed);
+
+    let mut chunk_data = vec![vec![0.0; chunk_width]; chunk_height];
+
+    for j in 0..chunk_height {
+        for i in 0..chunk_width {
+            let mut noise_value = 0.0;
+            let mut world_x = (chunk_x as f64 * chunk_width as f64 + i as f64) * frequency;
+            let mut world_y = (chunk_y as f64 * chunk_height as f64 + j as f64) * frequency;
+
+            let mut amplitude = 1.0;
+
+            for _ in 0..octaves {
+                noise_value += perlin.get([world_x, world_y]) * amplitude;
+                world_x *= lacunarity;
+                world_y *= lacunarity;
+                amplitude *= persistence;
+            }
+
+            let height = (noise_value + 1.0) / 2.0;
+            chunk_data[j][i] = height;
+        }
+    }
+
+    let file_path = format!("{}/chunk_{}_{}.obj", save_path, chunk_x, chunk_y);
+    let mut file = File::create(file_path)?;
+
+    // Write vertices
+    for (i, row) in chunk_data.iter().enumerate() {
+        for (j, value) in row.iter().enumerate() {
+            writeln!(
+                file,
+                "v {} {} {}",
+                i as f32,
+                (*value as f64 * map_size as f64) as f32,
+                j as f32,
+            )?;
+        }
+    }
+
+    // Write faces
+    let total_vertices = chunk_width * chunk_height;
+    for i in 1..=total_vertices - chunk_width {
+        if i % chunk_width != 0 {
+            writeln!(file, "f {} {} {}", i, i + 1, i + chunk_width)?;
+            writeln!(file, "f {} {} {}", i + chunk_width, i + 1, i + chunk_width + 1)?;
+        }
+    }
+
+    Ok(())
+}

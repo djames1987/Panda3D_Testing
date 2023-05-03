@@ -1,0 +1,10 @@
+chunk_width = 32
+chunk_height = 32
+map_size = 5
+frequency = 0.09
+lacunarity = 1.0
+persistence = 1.0
+octaves = 6
+seed = 1234
+save_path = "data/"
+chunks_to_generate = 64
